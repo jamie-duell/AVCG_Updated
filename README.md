@@ -57,7 +57,6 @@ The evaluation pipeline computes a wide array of metrics to assess counterfactua
 - **Implausibility**: Average distance to the nearest training samples of the target class (lower is better).
 - **Diversity**: Average pairwise L2 distance between multiple generated candidates, measuring user agency.
 - **Cross-Model Validity (CMV)**: Consensus validity across an ensemble of 5 independently trained MLPs.
-- **Validity After Training (VAT)**: Consensus validity against a fresh, independent Rashomon ensemble of models.
 - **Rashomon Validity Ratio**: Fraction of the current epsilon-restricted Rashomon set that agrees on the CF's validity.
 - **NE Robustness**: Robustness of the CF's prediction to small input noise.
 - **R_IC**: Input Change Robustness; measures how much the generated CF shifts when the original input is slightly perturbed.
