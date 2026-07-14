@@ -38,7 +38,7 @@ python main.py
 - Performs an epsilon sweep for $\epsilon \in \{0.0, 0.1, 0.2, 0.5, 0.8\}$.
 - Trains a base MC Dropout model and extracts a diverse Rashomon set of models.
 - Trains a **Rashomon CVAE** for each epsilon, specifically optimized against the restricted posterior.
-- Evaluates our method against several baselines: **CF-VAE**, **MM-CF-CVAE**, **Batten et al.**, **QUCE**, and **Schut et al.**
+- Evaluates our method against several baselines: **Batten et al.**, **QUCE**, and **Schut et al.**
 - Saves raw results, plots, and a preliminary summary in `rashomon_results/[dataset_name]/`.
 
 ### 3. Generate Summary Tables
