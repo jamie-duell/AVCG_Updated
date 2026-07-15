@@ -1,4 +1,4 @@
-# Rashomon Epsilon Sweep Experiment (MC Dropout Version)
+# AVCG Experiments
 
 This repository contains the implementation and evaluation scripts for the Rashomon Epsilon Sweep experiment. The study focuses on evaluating AVCG under Bayesian predictors and the Rashomon Effect, specifically using MC Dropout.
 
