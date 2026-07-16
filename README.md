@@ -1,6 +1,6 @@
-# Rashomon Epsilon Sweep Experiment (MC Dropout Version)
+# AVCG Experiments
 
-This repository contains the implementation and evaluation scripts for the Rashomon Epsilon Sweep experiment. The study focuses on evaluating Counterfactual Generative Models (CVAE) under the Rashomon Effect, specifically using MC Dropout to approximate the model posterior.
+This repository contains the implementation and evaluation scripts for the Rashomon Epsilon Sweep experiment. The study focuses on evaluating AVCG under Bayesian predictors and the Rashomon Effect, specifically using MC Dropout.
 
 ## Project Structure
 
@@ -37,8 +37,8 @@ python main.py
 - Iterates through four UCI datasets: `breast_cancer`, `heart_disease`, `spambase`, and `adult_income`.
 - Performs an epsilon sweep for $\epsilon \in \{0.0, 0.1, 0.2, 0.5, 0.8\}$.
 - Trains a base MC Dropout model and extracts a diverse Rashomon set of models.
-- Trains a **Rashomon CVAE** for each epsilon, specifically optimized against the restricted posterior.
-- Evaluates our method against several baselines: **CF-VAE**, **MM-CF-CVAE**, **Batten et al.**, **QUCE**, and **Schut et al.**
+- Trains a **AVCG-R/AVCG-B** for each epsilon, specifically optimized against the restricted posterior.
+- Evaluates our method against several baselines: **Batten et al.**, **QUCE**, and **Schut et al.**
 - Saves raw results, plots, and a preliminary summary in `rashomon_results/[dataset_name]/`.
 
 ### 3. Generate Summary Tables
@@ -57,7 +57,6 @@ The evaluation pipeline computes a wide array of metrics to assess counterfactua
 - **Implausibility**: Average distance to the nearest training samples of the target class (lower is better).
 - **Diversity**: Average pairwise L2 distance between multiple generated candidates, measuring user agency.
 - **Cross-Model Validity (CMV)**: Consensus validity across an ensemble of 5 independently trained MLPs.
-- **Validity After Training (VAT)**: Consensus validity against a fresh, independent Rashomon ensemble of models.
 - **Rashomon Validity Ratio**: Fraction of the current epsilon-restricted Rashomon set that agrees on the CF's validity.
 - **NE Robustness**: Robustness of the CF's prediction to small input noise.
 - **R_IC**: Input Change Robustness; measures how much the generated CF shifts when the original input is slightly perturbed.
