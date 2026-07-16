@@ -884,17 +884,35 @@ def save_summary_comparison_table(df, dataset_name, out_dir="."):
     comp_df = pd.DataFrame(comparison_rows)
     
     # Clean and format
-    cols_to_keep = ["Method"] + [m for m, _, _ in METRICS_TO_PLOT if m in comp_df.columns]
+    cols_to_keep = ["Method"]
+    for m, _, _ in METRICS_TO_PLOT:
+        if m in comp_df.columns:
+            cols_to_keep.append(m)
+        if f"{m}_std" in comp_df.columns:
+            cols_to_keep.append(f"{m}_std")
+    
     comp_df = comp_df[cols_to_keep]
     
     path = os.path.join(out_dir, f"summary_vs_baselines_{dataset_name}.csv")
     comp_df.to_csv(path, index=False)
     
+    # Create a pretty-printed version with mean ± std
+    display_df = comp_df.copy()
+    for m, _, _ in METRICS_TO_PLOT:
+        if m in display_df.columns and f"{m}_std" in display_df.columns:
+            display_df[m] = display_df.apply(
+                lambda row: f"{row[m]:.4f} ± {row[f'{m}_std']:.4f}", axis=1
+            )
+    
+    # Drop the _std columns for the text display
+    cols_for_text = ["Method"] + [m for m, _, _ in METRICS_TO_PLOT if m in display_df.columns]
+    display_df = display_df[cols_for_text]
+
     txt_path = os.path.join(out_dir, f"summary_vs_baselines_{dataset_name}.txt")
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write(f"RASHOMON CVAE (eps=0, 0.5, 0.8) VS BASELINES - {dataset_name.upper()}\n")
         f.write("=" * 80 + "\n\n")
-        f.write(comp_df.to_string(index=False))
+        f.write(display_df.to_string(index=False))
     print(f"Summary comparison saved to {txt_path}")
 
 
@@ -911,10 +929,9 @@ def save_results_table(df, dataset_name, out_dir="."):
 if __name__ == "__main__":
     DATASETS     = ["breast_cancer", "heart_disease", "spambase", "adult_income"]
     EPSILONS     = [0.0, 0.1, 0.2, 0.5, 0.8]
-    # Reduced for demonstration; original experiment used 5 seeds and 100 samples
-    SEEDS        = [11, 22, 33] 
+    SEEDS        = [11, 22, 33, 44, 55]
     N_ENSEMBLE   = 50
-    N_EVAL       = 50
+    N_EVAL       = 100
     OUT_DIR      = "./rashomon_results"
 
     os.makedirs(OUT_DIR, exist_ok=True)

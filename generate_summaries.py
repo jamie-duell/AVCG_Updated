@@ -72,20 +72,38 @@ def generate_summaries():
             
         comp_df = pd.DataFrame(comparison_rows)
         
-        # Keep only desired columns
-        cols_to_keep = ["Method"] + [m for m in metrics if m in comp_df.columns]
+        # Keep both mean and std columns
+        cols_to_keep = ["Method"]
+        for m in metrics:
+            if m in comp_df.columns:
+                cols_to_keep.append(m)
+            if f"{m}_std" in comp_df.columns:
+                cols_to_keep.append(f"{m}_std")
+        
         comp_df = comp_df[cols_to_keep]
         
         # Save CSV
         out_csv = os.path.join(dataset_dir, f"summary_vs_baselines_{dataset_name}.csv")
         comp_df.to_csv(out_csv, index=False)
         
+        # Create a pretty-printed version with mean ± std for the TXT file
+        display_df = comp_df.copy()
+        for m in metrics:
+            if m in display_df.columns and f"{m}_std" in display_df.columns:
+                display_df[m] = display_df.apply(
+                    lambda row: f"{row[m]:.4f} ± {row[f'{m}_std']:.4f}", axis=1
+                )
+        
+        # Drop the _std columns for the text display
+        cols_for_text = ["Method"] + [m for m in metrics if m in display_df.columns]
+        display_df = display_df[cols_for_text]
+
         # Save TXT (readable table)
         out_txt = os.path.join(dataset_dir, f"summary_vs_baselines_{dataset_name}.txt")
         with open(out_txt, "w", encoding="utf-8") as f:
             f.write(f"RASHOMON CVAE (eps=0, 0.5, 0.8) VS BASELINES - {dataset_name.upper()}\n")
             f.write("=" * 80 + "\n\n")
-            f.write(comp_df.to_string(index=False))
+            f.write(display_df.to_string(index=False))
         
         print(f"  Saved summary to {out_csv} and {out_txt}")
 
