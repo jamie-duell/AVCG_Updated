@@ -442,13 +442,14 @@ def generate_cf_greedy(model, x_original, target_class, lower, upper):
                 break
             grad_flat    = grad.view(-1)
             altered_flat = altered_features.view(-1)
-            grad_flat[altered_flat >= 5] = 0.0
+            grad_flat[altered_flat >= 30] = 0.0
             if grad_flat.abs().max() == 0:
                 break
             max_idx = torch.argmax(grad_flat.abs())
             x_prime.view(-1)[max_idx] -= 0.1 * grad_flat[max_idx].sign()
             altered_features.view(-1)[max_idx] += 1
             x_prime.clamp_(lower, upper)
+    model.eval()
     return x_prime.detach(), time.perf_counter() - t0
 
 
