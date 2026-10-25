@@ -2,11 +2,9 @@
 
 This repository contains experiments for evaluating AVCG-style counterfactual generation under MC Dropout and Rashomon-set model uncertainty.
 
-The repo currently has three experiment entry points:
 
 - `main.py`: tabular epsilon-sweep experiments on UCI datasets.
 - `main_image.py`: image epsilon-sweep experiments on MNIST and CIFAR-10.
-- `generate_cifar_avcg_l_example.py`: simple CIFAR-10 AVCG-L counterfactual demo.
 - `run_robust_recourse_baselines.py`: runs BETARCE, ROAR-local, and ElliCE-embedding against the same experiment protocols.
 
 ## Setup
