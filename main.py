@@ -632,7 +632,7 @@ def _collect_metrics(cf, target_class, pred_label, x_original,
 # 7. Epsilon Sweep Experiment
 # ---------------------------------------------------------------------------
 def run_epsilon_experiment(dataset_name='credit',
-                           epsilons=(0.05, 0.1, 0.2, 0.4, 0.8),
+                           epsilons=(0.0, 0.01, 0.05, 0.1, 0.5),
                            seeds=(11, 22, 33),
                            n_ensemble=50,
                            n_samples_eval=50,
@@ -938,7 +938,7 @@ def save_summary_comparison_table(df, dataset_name, out_dir="."):
     epsilon because Rashomon-dependent metrics (e.g. RVR / validity-after-training)
     change with epsilon even when the baseline counterfactual itself is unchanged.
     """
-    target_eps = [0.0, 0.5, 0.8]
+    target_eps = [0.0, 0.01, 0.05, 0.1, 0.5]
     all_methods = df["Method"].unique()
     rash_methods = [m for m in all_methods if "Rashomon CVAE" in m]
     base_methods = [m for m in all_methods if "Rashomon CVAE" not in m]
@@ -1026,7 +1026,7 @@ def save_results_table(df, seed_df, dataset_name, out_dir="."):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     DATASETS = ["breast_cancer", "heart_disease", "spambase", "adult_income"]
-    EPSILONS = [0.0, 0.1, 0.2, 0.5, 0.8]
+    EPSILONS = [0.0, 0.01, 0.05, 0.1, 0.5]
     SEEDS = [11, 22, 33, 44, 55]
     N_ENSEMBLE = 50
     N_EVAL = 100

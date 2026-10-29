@@ -1,0 +1,37 @@
+{
+  "tabular_source": "main.py",
+  "out": "avcg_l_results",
+  "datasets": [
+    "breast_cancer",
+    "heart_disease",
+    "spambase",
+    "adult_income"
+  ],
+  "epsilons": [
+    0.0,
+    0.01,
+    0.05,
+    0.1,
+    0.5
+  ],
+  "seeds": [
+    11,
+    22,
+    33,
+    44,
+    55
+  ],
+  "n_eval": 100,
+  "n_ensemble": 50,
+  "base_epochs": 50,
+  "cvae_epochs": 50,
+  "n_posterior_heads": 50,
+  "prior_precision": 1.0,
+  "posterior_scale": 1.0,
+  "skip_ric": false,
+  "laplace_scope": "binary last layer, frozen feature extractor",
+  "posterior_center": "original trained classifier head (approximate MAP)",
+  "epsilon_definition": "mean validation NLL <= centre NLL + epsilon",
+  "metric_ensemble": "original MC dropout Rashomon set",
+  "aggregation": "instance metrics are averaged within each seed first; final metrics are reported as mean +/- sample SD (ddof=1) across seed-level means"
+}

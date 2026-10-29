@@ -44,7 +44,7 @@ from torch.utils.data import DataLoader, Subset
 
 
 DATASETS = ("breast_cancer", "heart_disease", "spambase", "adult_income")
-EPSILONS = (0.0, 0.1, 0.2, 0.5, 0.8)
+EPSILONS = (0.0, 0.01, 0.05, 0.1, 0.5)
 SEEDS = (11, 22, 33, 44, 55)
 
 

@@ -1,0 +1,40 @@
+{
+  "tabular_source": "main.py",
+  "out": "avcg_cvar_results",
+  "datasets": [
+    "breast_cancer",
+    "heart_disease",
+    "spambase",
+    "adult_income"
+  ],
+  "alphas": [
+    0.1,
+    0.2,
+    0.5,
+    1.0
+  ],
+  "seeds": [
+    11,
+    22,
+    33,
+    44,
+    55
+  ],
+  "n_eval": 100,
+  "n_ensemble": 50,
+  "base_epochs": 50,
+  "cvae_epochs": 50,
+  "hypothesis_scope": "full",
+  "hypothesis_epsilon": 0.05,
+  "metric_epsilon": 0.8,
+  "n_train_hypotheses": null,
+  "lambda_class": 1.0,
+  "lambda_kl": 0.1,
+  "lambda_prox": 0.1,
+  "skip_ric": false,
+  "cvar_definition": "mean of largest ceil(alpha*K) per-hypothesis NLLs per instance",
+  "alpha_semantics": "alpha=1 mean risk; smaller alpha emphasizes worse hypotheses",
+  "hypothesis_family": "existing frozen MC-dropout masks",
+  "metric_models": "existing base predictor, 5 CMV MLPs, class AEs, RVR/VAT ensembles",
+  "aggregation": "instance metrics are averaged within each seed first; final values are mean +/- sample SD (ddof=1) across seed-level means"
+}

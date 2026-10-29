@@ -54,7 +54,7 @@ from torch.utils.data import DataLoader, Subset
 
 TABULAR_DATASETS = ("breast_cancer", "heart_disease", "spambase", "adult_income")
 IMAGE_DATASETS = ("mnist", "cifar10")
-DEFAULT_EPSILONS = (0.0, 0.1, 0.2, 0.5, 0.8)
+DEFAULT_EPSILONS = (0.0, 0.01, 0.05, 0.1, 0.5)
 DEFAULT_SEEDS = (11, 22, 33, 44, 55)
 METHOD_NAMES = ("BETARCE", "ROAR-local", "ElliCE-embedding")
 
