@@ -25,6 +25,8 @@ The retention table gives the **mean number of qualifying masks** across seeds 1
 
 **Adult Income at ε = 0** is the only case in this sweep with an empty bank. The five held-out counts are 0, 2, 2, 2, and 4, giving the reported mean of 2.0. When a bank is empty, the legacy scorer uses its lowest-loss mask as a fallback. For manuscript RVR_ho, seed 11 has an undefined ratio and is excluded. A method with finite evaluations in the other four seeds therefore contributes four seed means. In general, the tables average finite counterfactual scores within each seed and report the mean and sample SD across contributing seeds. A single contributing seed supplies a mean only.
 
+To build Tables 1–2 and the mask-retention table, run `py generate_rvr_tables.py`. The generator reads each method’s seed-level scores and obtains both banks’ raw counts from the full-pool α = 0.2 rows of a local CVaR sweep. It expects `all_datasets_avcg_cvar_per_seed.csv` and `avcg_cvar_run_config.json` under `avcg_cvar_sweep/`. On a fresh clone, first install the experiment dependencies listed below and run `py run_avcg_cvar.py --alphas 0.2 --out avcg_cvar_sweep` to generate those two inputs. If you already have the saved sweep, you can run the table generator directly using only the Python standard library. It writes `adult_breast.tex`, `heart_spambase.tex`, and `mask_retention.tex` under `paper_tables/`. [Table generator](generate_rvr_tables.py) · [CVaR sweep](run_avcg_cvar.py)
+
 ### MLP evaluation in Tables 1–2 and Table 4
 
 | | Tables 1–2 · CMV | Table 4 · MLP |
@@ -48,11 +50,11 @@ py test_loading.py
 | --- | --- | --- |
 | Main AVCG and baseline comparison | `py main.py` | [rashomon_results](rashomon_results/) |
 | Last-layer Laplace (AVCG-L) | `py run_avcg_l.py` | [avcg_l_results](avcg_l_results/) |
-| CVaR objective | `py run_avcg_cvar.py` | [avcg_cvar_results](avcg_cvar_results/) |
+| CVaR objective | `py run_avcg_cvar.py` | `avcg_cvar_sweep/` |
 | BetaRCE, ROAR, and ElliCE | `py run_robust_recourse_baselines.py --kind tabular` | [robust_baseline_results/tabular](robust_baseline_results/tabular/) |
 | Mixed-family transfer | `py run_avcg_cross_family.py` | [avcg_cross_family](avcg_cross_family/) |
 
-The main run evaluates up to 100 correctly classified test inputs per dataset and seed at the five tolerances shown above. In each dataset directory, `seed_level_results_<dataset>.csv` contains the seed means used for aggregation and `results_<dataset>.csv` contains the summary. The archived CVaR results in this branch use evaluation ε = 0.8. The manuscript CVaR rows use α = 0.2 and score the full-pool generator at each of the five tabulated tolerances. [Archived CVaR run configuration](avcg_cvar_results/avcg_cvar_run_config.json)
+The main run evaluates up to 100 correctly classified test inputs per dataset and seed at the five tolerances shown above. In each dataset directory, `seed_level_results_<dataset>.csv` contains the seed means used for aggregation and `results_<dataset>.csv` contains the summary. The CVaR sweep scores each generated counterfactual at all five tolerances. The earlier run in `avcg_cvar_results/` used evaluation ε = 0.8. [Earlier configuration](avcg_cvar_results/avcg_cvar_run_config.json)
 
 To reproduce the construction-bank retention counts without training counterfactual generators, run `py count_rashomon_set_sizes.py`. The mixed-family run also saves [construction counts by dataset, seed, and tolerance](avcg_cross_family/rashomon_set_sizes.csv).
 

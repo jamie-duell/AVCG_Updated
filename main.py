@@ -548,17 +548,8 @@ def cross_model_validity(cf, target_class, surrogates):
 
 
 def validity_after_training(cf, target_class, eval_ensemble, epsilon):
-    """
-    Evaluates validity against a set of 'freshly trained' models (eval_ensemble)
-    that are also within the Rashomon set (L <= L* + epsilon).
-    """
-    members = eval_ensemble.get_rashomon_models(epsilon)
-    votes = 0
-    for m in members:
-        m.eval()
-        with torch.no_grad():
-            votes += int(m(cf).max(1)[1].item() == target_class)
-    return votes / len(members)
+    """Legacy metric: RVR on a fresh mask bank, including the best-mask fallback."""
+    return rashomon_validity_ratio(cf, target_class, eval_ensemble, epsilon)
 
 
 def robustness_ne(cf, target_class, model, noise=0.01, n_mc=20, n_noise=20):
@@ -674,8 +665,7 @@ def run_epsilon_experiment(dataset_name='credit',
         ensemble = MCDropoutRashomonSet(base_model, n_samples=n_ensemble)
         ensemble.evaluate_all(val_loader, base_model=base_model)
 
-        # Second, freshly sampled ensemble for VAT metric evaluation
-        # This approximates 'freshly trained models of similar performance'
+        # The held-out masks use the same fitted weights and are used only for scoring.
         eval_ensemble = MCDropoutRashomonSet(base_model, n_samples=max(20, n_ensemble // 2))
         eval_ensemble.evaluate_all(val_loader, base_model=base_model)
 

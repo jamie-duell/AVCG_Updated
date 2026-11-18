@@ -15,13 +15,18 @@ By default, P_Phi is the full empirical MC-dropout frozen-mask distribution used
 MCDropoutRashomonSet. A Rashomon-restricted CVaR variant can instead be selected via
 --hypothesis-scope rashomon.
 
-The script sweeps alpha over {0.1, 0.2, 0.5, 1.0}, writes per-instance and summary
-CSV files, and creates one line plot per metric showing how the metric changes with
-alpha. It does not rerun the existing baselines.
+The default evaluation epsilons are 0, 0.01, 0.05, 0.1 and 0.5. Each dataset,
+seed and alpha uses one trained generator. The same generated counterfactual and
+the same two frozen mask banks are used at every evaluation epsilon. Only RVR
+and Validity After Training depend on the evaluation epsilon in the tabular protocol.
+CSV outputs retain the metric epsilon at instance, seed and summary levels.
+The default alpha sweep is 0.1, 0.2, 0.5 and 1.0. Use --alphas 0.2 for the main table.
+Evaluation draws are paired by seed and test index, so running alpha 0.2 alone
+uses the same eligible inputs and latent draws as running it in the full sweep.
 
 Examples
 --------
-python run_avcg_cvar.py --tabular-source main.py --out avcg_cvar_results
+python run_avcg_cvar.py --tabular-source main.py --alphas 0.2 --out avcg_cvar_sweep
 python run_avcg_cvar.py --tabular-source 'Pasted markdown(20260926-105957).md'
 python run_avcg_cvar.py --tabular-source main.py --hypothesis-scope rashomon \
     --hypothesis-epsilon 0.05 --metric-epsilon 0.05
@@ -52,6 +57,11 @@ from torch.utils.data import DataLoader, Subset
 
 DATASETS = ("breast_cancer", "heart_disease", "spambase", "adult_income")
 ALPHAS = (0.1, 0.2, 0.5, 1.0)
+METRIC_EPSILONS = (0.0, 0.01, 0.05, 0.1, 0.5)
+GROUP_KEYS = ["Dataset", "Method", "Alpha", "Hypothesis Scope", "Hypothesis Epsilon",
+              "Metric Epsilon"]
+COUNT_COLUMNS = ["Hypothesis Count", "CVaR Tail Count", "RVR Mask Count", "VAT Mask Count",
+                 "RVR Raw Mask Count", "VAT Raw Mask Count"]
 SEEDS = (11, 22, 33, 44, 55)
 
 
@@ -65,7 +75,11 @@ def load_original(path: Path) -> ModuleType:
 
     content = path.read_text(encoding="utf-8-sig").strip()
     if content.startswith("```"):
-        content = content.split("\n", 1)[1].rsplit("```", 1)[0]
+        lines = content.splitlines()
+        fence = re.match(r"^`{3,}", lines[0]).group()
+        if lines[-1].strip() != fence:
+            raise ValueError(f"Expected closing {fence} in {path}")
+        content = "\n".join(lines[1:-1])
 
     tree = ast.parse(content, filename=str(path))
     tree.body = [
@@ -95,6 +109,9 @@ def load_original(path: Path) -> ModuleType:
         "train_mc_dropout",
         "train_standard_mlp",
         "train_autoencoder",
+        "DEVICE",
+        "rashomon_validity_ratio",
+        "validity_after_training",
         "_collect_metrics",
         "generate_cf_amortized",
     )
@@ -283,275 +300,114 @@ def prepare_original_metrics(
 # ---------------------------------------------------------------------------
 def _metric_columns(raw: pd.DataFrame):
     """Return numeric instance-level metric columns, excluding metadata."""
-    metadata = {
-        "Dataset",
-        "Seed",
-        "Test Index",
-        "Alpha",
-        "Method",
-        "Status",
-        "Error",
-        "Hypothesis Scope",
-        "Hypothesis Epsilon",
-        "Metric Epsilon",
-        "Hypothesis Count",
-        "CVaR Tail Count",
-    }
-    return [
-        col
-        for col in raw.columns
-        if col not in metadata and pd.api.types.is_numeric_dtype(raw[col])
-    ]
+    metadata = {*GROUP_KEYS, *COUNT_COLUMNS, "Seed", "Test Index", "Status", "Error"}
+    return [col for col in raw.select_dtypes(include="number") if col not in metadata]
+
+
+def finite_values(series):
+    return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
 
 
 def seed_summary_frame(raw: pd.DataFrame) -> pd.DataFrame:
-    """Compute one metric mean per independent seed/run.
-
-    Each row in the returned frame corresponds to one
-    (dataset, alpha, method, seed) combination. Instance-level metric values are
-    averaged *within* that seed first. This frame is the intermediate level used
-    for the final mean +/- SD across seeds.
-    """
+    """One mean per metric within each seed and evaluation setting."""
     if raw.empty:
         return pd.DataFrame()
 
+    keys = GROUP_KEYS + ["Seed"]
     metrics = _metric_columns(raw)
     rows = []
-
-    for (dataset, alpha, method, seed), group in raw.groupby(
-        ["Dataset", "Alpha", "Method", "Seed"], sort=True
-    ):
-        attempted = len(group)
-        succeeded = int((group["Status"] == "ok").sum())
-
-        row = {
-            "Dataset": dataset,
-            "Alpha": float(alpha),
-            "Method": method,
-            "Seed": int(seed),
-            "N Attempted": attempted,
-            "N Succeeded": succeeded,
-            "Success Rate": succeeded / attempted if attempted else np.nan,
-        }
-
-        # Settings / run-level quantities. Hypothesis Count and CVaR Tail Count
-        # can vary by seed for a Rashomon-restricted hypothesis distribution, so
-        # retain their seed-specific values here.
-        for col in (
-            "Hypothesis Count",
-            "CVaR Tail Count",
-            "Hypothesis Epsilon",
-            "Metric Epsilon",
-        ):
-            if col in group.columns:
-                vals = (
-                    pd.to_numeric(group[col], errors="coerce")
-                    .replace([np.inf, -np.inf], np.nan)
-                    .dropna()
-                )
-                row[col] = float(vals.iloc[0]) if len(vals) else np.nan
-
-        # Stage 1: instance-level observations -> ONE mean for this seed.
+    # Full-scope CVaR has a missing training epsilon by design.
+    for setting, group in raw.groupby(keys, dropna=False, sort=True):
+        ok = group[group["Status"].eq("ok")]
+        row = dict(zip(keys, setting))
+        row.update({"N Attempted": len(group), "N Succeeded": len(ok),
+                    "Success Rate": len(ok) / len(group)})
+        for col in COUNT_COLUMNS:
+            if col in group:
+                row[col] = group[col].iloc[0]
         for col in metrics:
-            values = (
-                pd.to_numeric(group[col], errors="coerce")
-                .replace([np.inf, -np.inf], np.nan)
-                .dropna()
-            )
-            row[col] = float(values.mean()) if len(values) else np.nan
-            row[col + "_n_instances"] = int(len(values))
-
+            values = finite_values(ok[col])
+            row[col] = values.mean()
+            row[col + "_n_instances"] = len(values)
         rows.append(row)
-
-    return (
-        pd.DataFrame(rows)
-        .sort_values(["Dataset", "Alpha", "Method", "Seed"])
-        .reset_index(drop=True)
-    )
+    return pd.DataFrame(rows)
 
 
-def summary_frame(raw: pd.DataFrame) -> pd.DataFrame:
-    """Report mean +/- sample SD across independent seed-level means.
-
-    Two-stage aggregation:
-      1. Average instance-level metric values within each seed.
-      2. Average those seed-level means and compute sample SD (ddof=1) across seeds.
-
-    N Attempted / N Succeeded remain total counts across seeds so the familiar
-    success-count presentation (e.g. 500/500) is preserved.
-    """
+def summary_frame(raw: pd.DataFrame, per_seed=None) -> pd.DataFrame:
+    """Mean and sample SD of finite seed-level means, separately at each epsilon."""
     if raw.empty:
         return pd.DataFrame()
 
-    per_seed = seed_summary_frame(raw)
-    if per_seed.empty:
-        return pd.DataFrame()
-
+    if per_seed is None:
+        per_seed = seed_summary_frame(raw)
     metrics = _metric_columns(raw)
     rows = []
-
-    for (dataset, alpha, method), group in per_seed.groupby(
-        ["Dataset", "Alpha", "Method"], sort=True
-    ):
-        row = {
-            "Dataset": dataset,
-            "Alpha": float(alpha),
-            "Method": method,
-            "N Seeds": int(group["Seed"].nunique()),
-            "N Attempted": int(group["N Attempted"].sum()),
-            "N Succeeded": int(group["N Succeeded"].sum()),
-        }
-
-        # Success rate is itself a run-level statistic, so report its mean and
-        # between-seed sample SD. With equal N per seed, its mean equals the
-        # pooled success proportion.
-        success_rates = (
-            pd.to_numeric(group["Success Rate"], errors="coerce")
-            .replace([np.inf, -np.inf], np.nan)
-            .dropna()
-        )
-        if len(success_rates):
-            row["Success Rate"] = float(success_rates.mean())
-            row["Success Rate_std"] = (
-                float(success_rates.std(ddof=1)) if len(success_rates) > 1 else 0.0
-            )
-        else:
-            row["Success Rate"] = np.nan
-            row["Success Rate_std"] = np.nan
-
-        # Fixed experiment settings.
-        for col in ("Hypothesis Epsilon", "Metric Epsilon"):
-            if col in group.columns:
-                vals = (
-                    pd.to_numeric(group[col], errors="coerce")
-                    .replace([np.inf, -np.inf], np.nan)
-                    .dropna()
-                )
-                row[col] = float(vals.iloc[0]) if len(vals) else np.nan
-
-        # Run-level hypothesis counts can differ by seed when using a restricted
-        # Rashomon set, so aggregate them transparently as mean +/- SD too.
-        for col in ("Hypothesis Count", "CVaR Tail Count"):
-            if col in group.columns:
-                vals = (
-                    pd.to_numeric(group[col], errors="coerce")
-                    .replace([np.inf, -np.inf], np.nan)
-                    .dropna()
-                )
-                if len(vals):
-                    row[col] = float(vals.mean())
-                    row[col + "_std"] = (
-                        float(vals.std(ddof=1)) if len(vals) > 1 else 0.0
-                    )
-                else:
-                    row[col] = np.nan
-                    row[col + "_std"] = np.nan
-
-        # Stage 2: seed-level means -> overall mean +/- sample SD across seeds.
-        for col in metrics:
-            values = (
-                pd.to_numeric(group[col], errors="coerce")
-                .replace([np.inf, -np.inf], np.nan)
-                .dropna()
-            )
-            if len(values):
-                row[col] = float(values.mean())
-                row[col + "_std"] = (
-                    float(values.std(ddof=1)) if len(values) > 1 else 0.0
-                )
-                row[col + "_n_seeds"] = int(len(values))
-            else:
-                row[col] = np.nan
-                row[col + "_std"] = np.nan
-                row[col + "_n_seeds"] = 0
-
+    for setting, group in per_seed.groupby(GROUP_KEYS, dropna=False, sort=True):
+        row = dict(zip(GROUP_KEYS, setting))
+        row["N Seeds"] = len(group)
+        row["N Attempted"] = group["N Attempted"].sum()
+        row["N Succeeded"] = group["N Succeeded"].sum()
+        for col in ["Success Rate", *COUNT_COLUMNS, *metrics]:
+            if col in group:
+                values = finite_values(group[col])
+                row[col] = values.mean()
+                row[col + "_std"] = values.std(ddof=1)
+                if col in metrics:
+                    row[col + "_n_seeds"] = len(values)
         rows.append(row)
+    return pd.DataFrame(rows)
 
-    return (
-        pd.DataFrame(rows)
-        .sort_values(["Dataset", "Alpha", "Method"])
-        .reset_index(drop=True)
-    )
+
 
 def _safe_filename(text: str) -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "_", text.strip())
     return text.strip("_") or "metric"
 
 
-def plot_alpha_sweep(summary: pd.DataFrame, out_dir: Path):
-    """Create one plot per mean metric with alpha on the x-axis."""
+def plot_sweep(summary: pd.DataFrame, out_dir: Path):
+    """Keep each plotted series at one fixed alpha or one fixed evaluation epsilon."""
     if summary.empty:
         return
+    if summary["Alpha"].nunique() == 1 and summary["Metric Epsilon"].nunique() > 1:
+        axis, fixed = "Metric Epsilon", "Alpha"
+    else:
+        axis, fixed = "Alpha", "Metric Epsilon"
+    metadata = {*GROUP_KEYS, *COUNT_COLUMNS, "N Seeds", "N Attempted", "N Succeeded", "Success Rate"}
+    metrics = [c for c in summary.select_dtypes(include="number")
+               if c not in metadata and not c.endswith(("_std", "_n_seeds"))]
 
-    plot_dir = out_dir / "metric_plots"
-    plot_dir.mkdir(parents=True, exist_ok=True)
-
-    non_metric = {
-        "Alpha",
-        "N Seeds",
-        "N Attempted",
-        "N Succeeded",
-        "Success Rate",
-        "Hypothesis Count",
-        "CVaR Tail Count",
-        "Hypothesis Epsilon",
-        "Metric Epsilon",
-    }
-    metric_cols = [
-        c
-        for c in summary.columns
-        if c not in {"Dataset", "Method"}
-        and c not in non_metric
-        and not c.endswith("_std")
-        and not c.endswith("_n_seeds")
-        and pd.api.types.is_numeric_dtype(summary[c])
-    ]
-
-    for metric in metric_cols:
-        fig, ax = plt.subplots(figsize=(7.5, 4.8))
-        plotted = False
-
-        for dataset, group in summary.groupby("Dataset", sort=True):
-            group = group.sort_values("Alpha")
-            y = pd.to_numeric(group[metric], errors="coerce").to_numpy(dtype=float)
-            x = group["Alpha"].to_numpy(dtype=float)
-            finite = np.isfinite(y)
-            if not finite.any():
-                continue
-
-            std_col = metric + "_std"
-            if std_col in group.columns:
-                yerr = pd.to_numeric(group[std_col], errors="coerce").to_numpy(dtype=float)
-                yerr = np.where(np.isfinite(yerr), yerr, 0.0)
-                ax.errorbar(x[finite], y[finite], yerr=yerr[finite], marker="o", label=dataset)
-            else:
-                ax.plot(x[finite], y[finite], marker="o", label=dataset)
-            plotted = True
-
-        if not plotted:
+    for value, panel in summary.groupby(fixed, sort=True):
+        folder = out_dir / "metric_plots" / f"{_safe_filename(fixed)}_{value:g}"
+        folder.mkdir(parents=True, exist_ok=True)
+        for metric in metrics:
+            fig, ax = plt.subplots(figsize=(7.5, 4.8))
+            for dataset, group in panel.groupby("Dataset", sort=True):
+                points = group.sort_values(axis).dropna(subset=[metric])
+                if points.empty:
+                    continue
+                ax.plot(points[axis], points[metric], marker="o", label=dataset)
+                errors = points.dropna(subset=[metric + "_std"])
+                if not errors.empty:
+                    ax.errorbar(errors[axis], errors[metric], yerr=errors[metric + "_std"],
+                                fmt="none", color=ax.lines[-1].get_color())
+            if ax.lines:
+                ax.set(xlabel=axis, ylabel=metric, title=f"AVCG-CVaR, {fixed} = {value:g}")
+                ax.set_xticks(sorted(panel[axis].unique()))
+                ax.grid(True, alpha=0.25)
+                ax.legend()
+                fig.tight_layout()
+                fig.savefig(folder / f"{_safe_filename(metric)}.png", dpi=180)
             plt.close(fig)
-            continue
-
-        ax.set_xlabel(r"CVaR tail fraction $\alpha$")
-        ax.set_ylabel(metric)
-        ax.set_title(f"AVCG-CVaR: {metric} vs alpha")
-        ax.set_xticks(sorted(summary["Alpha"].dropna().unique()))
-        ax.grid(True, alpha=0.25)
-        ax.legend()
-        fig.tight_layout()
-        fig.savefig(plot_dir / f"{_safe_filename(metric)}_vs_alpha.png", dpi=180)
-        plt.close(fig)
 
 
 def save_progress(rows, out_dir: Path, dataset: str):
     raw = pd.DataFrame(rows)
+    per_seed = seed_summary_frame(raw)
+    summary = summary_frame(raw, per_seed)
     raw.to_csv(out_dir / f"{dataset}_avcg_cvar_per_instance.csv", index=False)
-    seed_summary_frame(raw).to_csv(
-        out_dir / f"{dataset}_avcg_cvar_per_seed.csv", index=False
-    )
-    summary_frame(raw).to_csv(
-        out_dir / f"{dataset}_avcg_cvar_summary.csv", index=False
-    )
+    per_seed.to_csv(out_dir / f"{dataset}_avcg_cvar_per_seed.csv", index=False)
+    summary.to_csv(out_dir / f"{dataset}_avcg_cvar_summary.csv", index=False)
+    return raw, summary
 
 
 # ---------------------------------------------------------------------------
@@ -585,6 +441,17 @@ def run_dataset(src, dataset: str, args, out_dir: Path):
             base, n_samples=max(20, args.n_ensemble // 2)
         )
         eval_ensemble.evaluate_all(val_loader, base_model=base)
+
+        # The original selector may fall back to the best mask at tight thresholds.
+        # Record its effective denominator and, when available, the unadjusted count.
+        mask_counts = {}
+        for epsilon in args.metric_epsilons:
+            counts = {}
+            for prefix, bank in (("RVR", ensemble), ("VAT", eval_ensemble)):
+                counts[f"{prefix} Mask Count"] = len(bank.get_rashomon_models(epsilon))
+                if hasattr(bank, "rashomon_size"):
+                    counts[f"{prefix} Raw Mask Count"] = bank.rashomon_size(epsilon)
+            mask_counts[epsilon] = counts
 
         members = select_hypotheses(
             ensemble, args.hypothesis_scope, args.hypothesis_epsilon
@@ -645,6 +512,12 @@ def run_dataset(src, dataset: str, args, out_dir: Path):
                 break
 
             x, y = x.to(device), y.to(device)
+            # A separate stream per factual keeps selection independent of the
+            # number of alphas and of metric calls on previous test inputs.
+            filter_seed, cf_seed = np.random.SeedSequence(
+                [seed, test_index, 4000]
+            ).generate_state(2).tolist()
+            src.set_seed(filter_seed)
             base.train()
             with torch.no_grad():
                 predicted = (
@@ -660,6 +533,7 @@ def run_dataset(src, dataset: str, args, out_dir: Path):
             target = 1 - predicted
 
             for alpha in args.alphas:
+                src.set_seed(cf_seed)
                 cvae = cvae_by_alpha[alpha]
                 tail_count = max(1, int(math.ceil(alpha * len(members))))
                 row = {
@@ -676,7 +550,6 @@ def run_dataset(src, dataset: str, args, out_dir: Path):
                         if args.hypothesis_scope == "rashomon"
                         else np.nan
                     ),
-                    "Metric Epsilon": args.metric_epsilon,
                     "Hypothesis Count": len(members),
                     "CVaR Tail Count": tail_count,
                 }
@@ -693,7 +566,7 @@ def run_dataset(src, dataset: str, args, out_dir: Path):
                             _cvae, perturbed, _target, lower, upper
                         )[:2]
 
-                    metric = src._collect_metrics(
+                    common_metrics = src._collect_metrics(
                         cf,
                         target,
                         predicted,
@@ -703,43 +576,52 @@ def run_dataset(src, dataset: str, args, out_dir: Path):
                         ae_by_class,
                         class_samples,
                         generation_time,
-                        ensemble=ensemble,
-                        eval_ensemble=eval_ensemble,
-                        epsilon=args.metric_epsilon,
+                        ensemble=None,
+                        eval_ensemble=None,
+                        epsilon=None,
                         generator_callable=(
                             regenerate if not args.skip_ric else None
                         ),
                         diversity=diversity,
                     )
-                    row.update(metric)
 
                     cvar_value, _ = empirical_cvar_at_cf(
                         cf, target, members, alpha
                     )
-                    row["CVaR NLL"] = cvar_value
-                    row["Hypothesis Validity Ratio"] = hypothesis_validity_ratio(
+                    common_metrics["CVaR NLL"] = cvar_value
+                    common_metrics["Hypothesis Validity Ratio"] = hypothesis_validity_ratio(
                         cf, target, members
                     )
-                    row["L2 Distance"] = torch.linalg.norm(cf - x).item()
-                    row["Status"] = "ok"
+                    common_metrics["L2 Distance"] = torch.linalg.norm(cf - x).item()
 
                 except (RuntimeError, ValueError, FloatingPointError) as exc:
                     row["Error"] = f"{type(exc).__name__}: {exc}"
 
-                rows.append(row)
+                # Frozen masks are deterministic. Applying the two original
+                # metrics here leaves the stochastic generation and noise draws
+                # independent of the number or order of evaluation epsilons.
+                for epsilon in args.metric_epsilons:
+                    result = {**row, "Metric Epsilon": epsilon, **mask_counts[epsilon]}
+                    if not row["Error"]:
+                        try:
+                            rvr = src.rashomon_validity_ratio(cf, target, ensemble, epsilon)
+                            vat = src.validity_after_training(cf, target, eval_ensemble, epsilon)
+                            result.update(common_metrics)
+                            result.update({"Rashomon Validity Ratio": rvr,
+                                           "Validity After Training": vat, "Status": "ok"})
+                        except (RuntimeError, ValueError, FloatingPointError) as exc:
+                            result["Error"] = f"{type(exc).__name__}: {exc}"
+                    rows.append(result)
 
-        save_progress(rows, out_dir, dataset)
+        if processed == 0:
+            raise RuntimeError(f"{dataset} seed={seed}: no eligible test inputs")
+
+        raw, summary = save_progress(rows, out_dir, dataset)
         print(
             f"{dataset} seed={seed}: evaluated {processed} correctly predicted inputs",
             flush=True,
         )
 
-    raw = pd.DataFrame(rows)
-    per_seed = seed_summary_frame(raw)
-    summary = summary_frame(raw)
-    raw.to_csv(out_dir / f"{dataset}_avcg_cvar_per_instance.csv", index=False)
-    per_seed.to_csv(out_dir / f"{dataset}_avcg_cvar_per_seed.csv", index=False)
-    summary.to_csv(out_dir / f"{dataset}_avcg_cvar_summary.csv", index=False)
     return raw, summary
 
 
@@ -752,7 +634,7 @@ def parse_args():
         default="main.py",
         help="Original AVCG tabular .py or fenced Markdown source",
     )
-    parser.add_argument("--out", default="avcg_cvar_results")
+    parser.add_argument("--out", default="avcg_cvar_sweep")
     parser.add_argument("--datasets", default=",".join(DATASETS))
     parser.add_argument("--alphas", default=",".join(map(str, ALPHAS)))
     parser.add_argument("--seeds", default=",".join(map(str, SEEDS)))
@@ -777,13 +659,9 @@ def parse_args():
         help="Rashomon epsilon used only when --hypothesis-scope rashomon",
     )
     parser.add_argument(
-        "--metric-epsilon",
-        type=float,
-        default=0.8,
-        help=(
-            "Epsilon used only by the existing RVR and Validity-After-Training "
-            "evaluation metrics; it does not affect full-scope CVaR training"
-        ),
+        "--metric-epsilons", "--epsilons", "--metric-epsilon", dest="metric_epsilons",
+        default=",".join(map(str, METRIC_EPSILONS)), metavar="E1,E2,...",
+        help="Evaluation thresholds for RVR and Validity After Training (default: %(default)s)",
     )
     parser.add_argument(
         "--n-train-hypotheses",
@@ -799,13 +677,19 @@ def parse_args():
 
     args = parser.parse_args()
     args.datasets = tuple(v.strip() for v in args.datasets.split(",") if v.strip())
-    args.alphas = tuple(float(v) for v in args.alphas.split(","))
-    args.seeds = tuple(int(v) for v in args.seeds.split(","))
+    try:
+        args.alphas = tuple(float(v) for v in args.alphas.split(","))
+        args.seeds = tuple(int(v) for v in args.seeds.split(","))
+        args.metric_epsilons = tuple(float(v) for v in args.metric_epsilons.split(","))
+    except ValueError as exc:
+        parser.error(f"Invalid comma-separated numeric list: {exc}")
 
+    if len(set(args.datasets)) != len(args.datasets) or len(set(args.seeds)) != len(args.seeds):
+        parser.error("Datasets and seeds must have distinct entries")
     if not args.datasets or any(d not in DATASETS for d in args.datasets):
         parser.error(f"Datasets must be chosen from {', '.join(DATASETS)}")
     if len(set(args.alphas)) != len(args.alphas) or any(
-        a <= 0 or a > 1 for a in args.alphas
+        not 0 < a <= 1 for a in args.alphas
     ):
         parser.error("Alphas must be distinct and lie in (0, 1]")
     if not args.seeds:
@@ -814,8 +698,10 @@ def parse_args():
         parser.error("Counts and epoch numbers must be positive")
     if args.n_train_hypotheses is not None and args.n_train_hypotheses < 1:
         parser.error("--n-train-hypotheses must be positive")
-    if args.hypothesis_epsilon < 0 or args.metric_epsilon < 0:
-        parser.error("Epsilon values must be nonnegative")
+    if len(set(args.metric_epsilons)) != len(args.metric_epsilons):
+        parser.error("Evaluation epsilons must be distinct")
+    if any(not math.isfinite(e) or e < 0 for e in (*args.metric_epsilons, args.hypothesis_epsilon)):
+        parser.error("Epsilon values must be finite and nonnegative")
     if min(args.lambda_class, args.lambda_kl, args.lambda_prox) < 0:
         parser.error("Loss weights must be nonnegative")
 
@@ -835,6 +721,7 @@ def main():
             "alpha_semantics": "alpha=1 mean risk; smaller alpha emphasizes worse hypotheses",
             "hypothesis_family": "existing frozen MC-dropout masks",
             "metric_models": "existing base predictor, 5 CMV MLPs, class AEs, RVR/VAT ensembles",
+            "evaluation_randomness": "paired by seed and test index across alphas and metric epsilons",
             "aggregation": (
                 "instance metrics are averaged within each seed first; final values are "
                 "mean +/- sample SD (ddof=1) across seed-level means"
@@ -865,7 +752,10 @@ def main():
         output / "all_datasets_avcg_cvar_per_seed.csv", index=False
     )
     summary_all.to_csv(output / "all_datasets_avcg_cvar_summary.csv", index=False)
-    plot_alpha_sweep(summary_all, output)
+    if summary_all.empty or summary_all["N Succeeded"].eq(0).any():
+        raise RuntimeError("At least one sweep setting has no successful evaluations. "
+                           "See the Error column in the per-instance CSV.")
+    plot_sweep(summary_all, output)
 
     print(f"\nComplete. Combined summary: {output / 'all_datasets_avcg_cvar_summary.csv'}")
     print(f"Metric plots: {output / 'metric_plots'}")
